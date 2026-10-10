@@ -1,0 +1,37 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y jq shellcheck
+
+      - name: Install tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install jq shellcheck
+
+      - name: shellcheck
+        run: shellcheck -S warning -x -s bash bin/* install.sh hooks/block-secrets.sh tests/*.sh tests/stubs/*
+
+      - name: Hook tests (system bash)
+        run: /bin/bash tests/test_hook.sh
+
+      - name: Script tests (system bash)
+        run: /bin/bash tests/test_scripts.sh
+
+      - name: Hook and script tests (PATH bash)
+        run: |
+          bash tests/test_hook.sh
+          bash tests/test_scripts.sh
