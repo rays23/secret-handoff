@@ -12,7 +12,7 @@
       "name": "secret-handoff",
       "source": "./",
       "description": "Move secrets from the clipboard into Doppler without Claude Code ever seeing the value. A guard hook blocks commands that would read secrets into the context.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "RayS23",
         "url": "https://github.com/rays23"
