@@ -43,14 +43,14 @@ A=0 # allowed
 # ---------- dset and dpush ----------
 t $A 'dset STRIPE_SECRET_KEY'
 t $A '  dset FOO  '
-t $A 'dpush STRIPE_SECRET_KEY sigreach prd'
+t $A 'dpush STRIPE_SECRET_KEY myapp prd'
 t $B 'dset STRIPE_SECRET_KEY --project x --config y'
 t $B 'dset STRIPE_SECRET_KEY; cat .env'
 t $B 'dset FOO && ls'
 t $B 'echo hi && dset FOO'
 t $B 'dset lower_case'
-t $B 'dpush STRIPE_SECRET_KEY sigreach'
-t $B 'dpush STRIPE_SECRET_KEY Sigreach prd'
+t $B 'dpush STRIPE_SECRET_KEY myapp'
+t $B 'dpush STRIPE_SECRET_KEY Myapp prd'
 t $B 'sudo dset FOO --x'
 t $B "bash -c 'dset FOO --x'"
 t $B $'dset FOO\ncat .env'
