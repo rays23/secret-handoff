@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# dset: store the clipboard content as a Doppler secret in the depot.
+# Usage: dset SECRET_NAME
+# The value never appears on screen, in argv or in the output. The clipboard is cleared on success.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=handoff-lib.sh
+source "$here/handoff-lib.sh"
+load_depot
+
+scope=(--project "$DEPOT_PROJECT" --config "$DEPOT_CONFIG")
+
+name="${1:-}"
+if [[ $# -ne 1 ]] || ! valid_name "$name"; then
+  echo "Usage: dset SECRET_NAME  (UPPER_SNAKE_CASE, target is always $DEPOT_PROJECT/$DEPOT_CONFIG)" >&2
+  exit 1
+fi
+
+val="$(pbpaste)" # trailing newlines are stripped by $(...)
+if [[ -z "$val" ]]; then
+  echo "Clipboard is empty, nothing stored." >&2
+  exit 1
+fi
+
+if doppler secrets get "$name" --plain "${scope[@]}" >/dev/null 2>&1; then
+  state="updated"
+else
+  state="new"
+fi
+
+# --silent is mandatory: without it Doppler prints the secrets table including the value.
+# The value goes through stdin, never as an argument (arguments are visible in 'ps').
+printf '%s' "$val" | doppler secrets set "$name" --silent "${scope[@]}"
+
+# Verify by hash, without printing the value.
+want="$(printf '%s' "$val" | sha)"
+stored="$(doppler secrets get "$name" --plain "${scope[@]}")"
+got="$(printf '%s' "$stored" | sha)"
+unset stored val
+if [[ "$want" != "$got" ]]; then
+  echo "✗ $name: stored value differs from the clipboard. Clipboard NOT cleared." >&2
+  exit 1
+fi
+
+pbcopy < /dev/null
+echo "✓ $name $state in $DEPOT_PROJECT/$DEPOT_CONFIG (verified), clipboard cleared."

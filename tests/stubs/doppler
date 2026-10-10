@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Test double for the doppler CLI. File-backed store, logs every call to argv.log.
+# STUB_CORRUPT=1 makes "secrets set" store a changed value (to test the verification).
+S="${STUB_STORE:?STUB_STORE not set}"
+mkdir -p "$S/store"
+printf '%s\n' "$*" >> "$S/argv.log"
+
+sub="${1:-} ${2:-}"
+shift 2 || true
+proj=""
+cfg=""
+name=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) proj="$2"; shift 2 ;;
+    --config) cfg="$2"; shift 2 ;;
+    -*) shift ;;
+    *) [[ -z "$name" ]] && name="$1"; shift ;;
+  esac
+done
+file="$S/store/${proj}__${cfg}__${name}"
+
+case "$sub" in
+  "secrets get")
+    [[ -f "$file" ]] || { echo "Doppler Error: Could not find requested secret: $name" >&2; exit 1; }
+    cat "$file"
+    echo
+    ;;
+  "secrets set")
+    v="$(cat)"
+    [[ -n "${STUB_CORRUPT:-}" ]] && v="x$v"
+    printf '%s' "$v" > "$file"
+    ;;
+  "secrets delete")
+    rm -f "$file"
+    ;;
+  *)
+    echo "doppler stub: unsupported call: $sub" >&2
+    exit 2
+    ;;
+esac

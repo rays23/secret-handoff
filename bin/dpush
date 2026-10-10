@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# dpush: copy a secret from the depot to a target project and config, without printing the value.
+# Usage: dpush SECRET_NAME TARGET_PROJECT TARGET_CONFIG
+# The copy in the depot stays, so one secret can go to several targets.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=handoff-lib.sh
+source "$here/handoff-lib.sh"
+load_depot
+
+name="${1:-}"
+proj="${2:-}"
+cfg="${3:-}"
+if [[ $# -ne 3 ]] || ! valid_name "$name" || ! valid_id "$proj" || ! valid_id "$cfg"; then
+  echo "Usage: dpush SECRET_NAME TARGET_PROJECT TARGET_CONFIG" >&2
+  exit 1
+fi
+if [[ "$proj" == "$DEPOT_PROJECT" && "$cfg" == "$DEPOT_CONFIG" ]]; then
+  echo "Target is the depot itself, nothing to do." >&2
+  exit 1
+fi
+
+val="$(doppler secrets get "$name" --plain --project "$DEPOT_PROJECT" --config "$DEPOT_CONFIG" 2>/dev/null)" || {
+  echo "✗ $name not found in $DEPOT_PROJECT/$DEPOT_CONFIG. Run 'dset $name' first." >&2
+  exit 1
+}
+
+printf '%s' "$val" | doppler secrets set "$name" --silent --project "$proj" --config "$cfg"
+
+want="$(printf '%s' "$val" | sha)"
+stored="$(doppler secrets get "$name" --plain --project "$proj" --config "$cfg")"
+got="$(printf '%s' "$stored" | sha)"
+unset stored val
+if [[ "$want" != "$got" ]]; then
+  echo "✗ $name: value in $proj/$cfg differs from the depot." >&2
+  exit 1
+fi
+
+echo "✓ $name: $DEPOT_PROJECT/$DEPOT_CONFIG → $proj/$cfg (verified)."

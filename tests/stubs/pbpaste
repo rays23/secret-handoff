@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Test double for pbpaste: the clipboard is a file.
+cat "${STUB_STORE:?STUB_STORE not set}/clipboard"
