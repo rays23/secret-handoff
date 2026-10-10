@@ -1,0 +1,24 @@
+{
+  "name": "secret-handoff",
+  "owner": {
+    "name": "RayS23",
+    "url": "https://github.com/rays23"
+  },
+  "metadata": {
+    "description": "Marketplace for secret-handoff, a clipboard-to-Doppler workflow that keeps secret values out of Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "secret-handoff",
+      "source": "./",
+      "description": "Move secrets from the clipboard into Doppler without Claude Code ever seeing the value. A guard hook blocks commands that would read secrets into the context.",
+      "version": "0.1.0",
+      "author": {
+        "name": "RayS23",
+        "url": "https://github.com/rays23"
+      },
+      "category": "security",
+      "homepage": "https://github.com/rays23/secret-handoff"
+    }
+  ]
+}
