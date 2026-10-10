@@ -3,6 +3,7 @@
 # Usage: dset SECRET_NAME
 # The value never appears on screen, in argv or in the output. The clipboard is cleared on success.
 set -euo pipefail
+set +x # never trace: xtrace would print the secret value
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=handoff-lib.sh

@@ -3,6 +3,7 @@
 # Usage: dpush SECRET_NAME TARGET_PROJECT TARGET_CONFIG
 # The copy in the depot stays, so one secret can go to several targets.
 set -euo pipefail
+set +x # never trace: xtrace would print the secret value
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=handoff-lib.sh

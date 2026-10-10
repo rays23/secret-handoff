@@ -32,7 +32,7 @@ block() {
 # ---------- .env and credential files ----------
 
 RE_ENVFILE='(^|[^[:alnum:]_])\.env(\.[[:alnum:]_-]+)?([^[:alnum:]_.-]|$)'
-RE_CREDFILE='(^|[^[:alnum:]_])\.doppler([^[:alnum:]_-]|$)'
+RE_CREDFILE='(^|[^[:alnum:]_])(\.doppler([^[:alnum:]_-]|$)|\.envrc([^[:alnum:]_.-]|$))'
 
 refs_envfile() {
   local s="${1//.env.example/}"
@@ -46,11 +46,26 @@ refs_credfile() {
 # ---------- preprocessing: heredocs ----------
 
 RE_HEREDOC=$'(^|[^<])<<(-?)[[:space:]]*(\'[^\']*\'|"[^"]*"|\\\\?[A-Za-z_][A-Za-z0-9_]*)'
+RE_MASK=$'^([^\'"\\\\]*)(\'[^\']*\'|"([^"\\\\]|\\\\.)*"|\\\\.)'
+
+# Removes quoted strings and a trailing comment from one line, so that '<<' inside them
+# does not open a heredoc.
+mask_line() {
+  local l="$1" r=""
+  while [[ "$l" =~ $RE_MASK ]]; do
+    r+="${BASH_REMATCH[1]} "
+    l="${l:${#BASH_REMATCH[0]}}"
+  done
+  r+="$l"
+  r="${r%%[[:space:]]#*}"
+  [[ "$r" == \#* ]] && r=""
+  printf '%s' "$r"
+}
 
 # Removes heredoc bodies. Bodies of quoted heredocs (<<'EOF') are plain text and are dropped.
 # Bodies of unquoted heredocs undergo expansion, so each line is kept as a double-quoted string.
 preprocess() {
-  local raw="$1" line cmp d body out="" in_hd=0 hd_delim="" hd_dash=0 hd_quoted=0
+  local raw="$1" line cmp d body masked out="" in_hd=0 hd_delim="" hd_dash=0 hd_quoted=0
   while IFS= read -r line || [[ -n "$line" ]]; do
     if ((in_hd)); then
       cmp="$line"
@@ -67,7 +82,8 @@ preprocess() {
       continue
     fi
     out+="$line"$'\n'
-    if [[ "$line" =~ $RE_HEREDOC ]]; then
+    masked="$(mask_line "$line")"
+    if [[ "$masked" == *"<<"* ]] && [[ "$line" =~ $RE_HEREDOC ]]; then
       d="${BASH_REMATCH[3]}"
       hd_dash=0
       [[ "${BASH_REMATCH[2]}" == "-" ]] && hd_dash=1
@@ -96,10 +112,14 @@ UNTERM=0
 DQRAW=""
 
 RE_PLAINWORD='^[A-Za-z0-9_./=:@%+,-]*$'
+# A quoted path whose last component is an env file or lives in ~/.doppler (e.g. "$HOME/app/.env").
+RE_QUOTED_ENVPATH='(^|/)\.env(\.[A-Za-z0-9_-]+)?$|(^|/)\.envrc$|(^|/)\.doppler(/.*)?$'
 
 emit_literal() {
   if [[ "$1" =~ $RE_PLAINWORD ]]; then
     out+="$1"
+  elif [[ "$1" =~ $RE_QUOTED_ENVPATH ]]; then
+    out+=" $1 "
   else
     out+=" "
   fi
@@ -144,6 +164,15 @@ scan_dq() {
     i=$((i + 1))
   done
   UNTERM=1
+  return 1
+}
+
+# A # starts a comment at the start of the text or after whitespace or a separator.
+comment_starts() {
+  ((i == 0)) && return 0
+  case "${s:i-1:1}" in
+    " " | $'\t' | $'\n' | ";" | "&" | "|" | "(") return 0 ;;
+  esac
   return 1
 }
 
@@ -208,6 +237,14 @@ scan_normal() {
         out+=')'
         i=$((i + 1))
         ;;
+      '#')
+        if comment_starts; then
+          while ((i < n)) && [[ "${s:i:1}" != $'\n' ]]; do i=$((i + 1)); done
+        else
+          out+='#'
+          i=$((i + 1))
+        fi
+        ;;
       $'\n')
         out+=';'
         i=$((i + 1))
@@ -236,10 +273,13 @@ tokenize() {
 # ---------- rules ----------
 
 # Command position: start, after ; & | ( ` or --, then optional prefixes (sudo, env, VAR=x) and a path.
-SKIP_ENV='((sudo|command|exec|nohup|time|builtin|noglob|env)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
-SKIP_NOENV='((sudo|command|exec|nohup|time|builtin|noglob)[[:space:]]+(-[^[:space:]]+[[:space:]]+)*|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*'
+# Each option may take one word as its argument (env -u NAME, sudo -u user). The argument is optional
+# in the pattern, so the regex matches both readings.
+SKIP_OPT='(-[^[:space:]]+[[:space:]]+([A-Za-z_][A-Za-z0-9_]*[[:space:]]+)?)*'
+SKIP_ENV="((sudo|command|exec|nohup|time|builtin|noglob|env)[[:space:]]+${SKIP_OPT}|(if|then|else|elif|while|until|do|!)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*"
+SKIP_NOENV="((sudo|command|exec|nohup|time|builtin|noglob)[[:space:]]+${SKIP_OPT}|(if|then|else|elif|while|until|do|!)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*"
 PATHP='([^[:space:];&|()`]*/)?'
-CP_HEAD='(^|[;&|(`]|--)[[:space:]]*'
+CP_HEAD='(^|[;&|(`{]|--|-exec(dir)?)[[:space:]]*'
 P_CP="${CP_HEAD}${SKIP_ENV}${PATHP}"
 P_CP_NOENV="${CP_HEAD}${SKIP_NOENV}${PATHP}"
 P_ANY='(^|[^[:alnum:]_.-])'
@@ -280,22 +320,87 @@ scan_doppler() {
   fi
 }
 
+lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# A variable whose name contains KEY, TOKEN, SECRET, PASS, PASSWORD or PASSWD as a whole
+# underscore-separated part (API_KEY, DB_PASSWORD; not MAX_TOKENS or TESTS_PASSED).
+# Applied to lower-cased text.
+SECRET_VAR_REF='\$\{?([a-z0-9_]*_)?(key|token|secret|pass|password|passwd)(_[a-z0-9_]*)?([^a-z0-9_]|$)'
+
+# End of a bare builtin: end of text, a separator, a comment or a redirection (set 2>&1, env > file).
+TERM_RE='([0-9]*[<>]|[;&|)#`]|$)'
+
 # Rules for command position only (they would give false positives as a plain grep).
 scan_cp_only() {
-  local t="$1" re
-  re="${P_CP_NOENV}env([[:space:]]+(-[^[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*))*[[:space:]]*(\$|[;&|)\`])"
+  local t="$1" re lt
+  re="${P_CP_NOENV}env([[:space:]]+(-[^[:space:]]+([[:space:]]+[A-Za-z_][A-Za-z0-9_]*)?|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*))*[[:space:]]*${TERM_RE}"
   [[ "$t" =~ $re ]] && block "'env' without a command prints secret values."
-  re="${P_CP}(set|export)[[:space:]]*(\$|[;&|)\`])"
-  [[ "$t" =~ $re ]] && block "Environment dump (set / export)."
-  re="${P_CP}(export|declare|typeset)[[:space:]]+-[[:alnum:]]*[px]([[:space:]]|\$)"
+  re='(^|[^[:alnum:]_.-])set[[:space:]]+(-[a-zA-Z]*x[a-zA-Z]*|-o[[:space:]]+xtrace)([[:space:];&|)]|$)'
+  [[ "$t" =~ $re ]] && block "Shell tracing (set -x) prints expanded secret values."
+  re="${P_CP}(bash|sh|zsh|dash|ksh)[[:space:]]+-[a-zA-Z]*x[a-zA-Z]*([[:space:]]|\$)"
+  [[ "$t" =~ $re ]] && block "Shell tracing (bash -x) prints expanded secret values."
+  re='(^|[^[:alnum:]_])(SHELLOPTS|BASHOPTS|BASH_XTRACEFD)='
+  [[ "$t" =~ $re ]] && block "Setting shell trace options can print secret values."
+  re="=(pbpaste|printenv|envsubst)${WORD_END}"
+  [[ "$t" =~ $re ]] && block "Indirect call of a blocked command through a variable or alias."
+  re="${P_CP}(set|export|declare|typeset|readonly)[[:space:]]*${TERM_RE}"
+  [[ "$t" =~ $re ]] && block "Environment dump (set / export / declare)."
+  re="${P_CP}(export|declare|typeset|readonly)[[:space:]]+-[[:alnum:]]*[px]([[:space:]]|\$)"
   [[ "$t" =~ $re ]] && block "Environment dump (export -p / declare -x / declare -p)."
-  re="${P_CP}(echo|printf)[^;&|]*\\$\\{?[A-Za-z0-9_]*([Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss])"
-  [[ "$t" =~ $re ]] && block "echo/printf of a variable that looks like a secret."
+  re="${P_CP}envsubst([[:space:]]|\$)"
+  [[ "$t" =~ $re ]] && block "envsubst expands environment variables, including secrets."
+
+  lt="$(lower "$t")"
+  re="${P_CP}(echo|printf|cat|tee|less|more|head|tail|xxd|od|base64|rev|tac|nl|bat)[^;&|]*${SECRET_VAR_REF}"
+  [[ "$lt" =~ $re ]] && block "Printing a variable that looks like a secret."
+  # Here-strings and unquoted heredocs that expand such a variable.
+  re="<<[^;&|]*${SECRET_VAR_REF}"
+  [[ "$lt" =~ $re ]] && block "Here-string that expands a variable that looks like a secret."
+  if [[ "$lt" == *"<<"* ]] && [[ "$lt" =~ $SECRET_VAR_REF ]]; then
+    block "Heredoc that expands a variable that looks like a secret."
+  fi
+
+  # Recursive grep from a root directory also reads dotfiles such as .env (unlike ripgrep, which skips them).
+  re="${P_CP}(grep|egrep|fgrep)[[:space:]]([^;&|]*[[:space:]])?(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)([[:space:]][^;&|]*)?[[:space:]](\.|\./|\.\.|~|~/|/|\*|\\\$HOME|\\\$PWD)([[:space:]]|\$)"
+  if [[ "$t" =~ $re ]] && [[ "$t" != *--include* ]]; then
+    block "Recursive grep over a root directory also reads .env files. Use the Grep tool, or limit it with --include or a subdirectory."
+  fi
+  re="${P_CP}rg[[:space:]]([^;&|]*[[:space:]])?(--hidden|--no-ignore[a-z-]*|--unrestricted|-u+)([[:space:]]|\$)"
+  [[ "$t" =~ $re ]] && block "ripgrep with --hidden or --no-ignore would search .env files."
+
+  # A glob that can match .env (.*, .e*, .en?)
+  re='(^|[[:space:]])\.(\*|\?|\[|e[*?[]|en[*?[])'
+  [[ "$t" =~ $re ]] && block "This glob can match .env files."
 }
 
-RE_DUMP='process\.env[[:space:]]*[),]|console\.log\([^)]*process\.env|os\.environ|ENV\.to_h|\$_ENV'
-RE_WRAPPER="${P_CP}(bash|sh|zsh|dash|ksh|eval|source|xargs|python[0-9.]*|node|perl|ruby|osascript|timeout)([[:space:]]|\$)"
+# Extra rules for the full text of wrappers (bash -c '...', python -c '...'). Looser, so only here.
+scan_any_extra() {
+  local t="$1" re lt
+  lt="$(lower "$t")"
+  re="${P_ANY}(echo|printf|cat|tee|less|more|head|tail|xxd|od|base64|rev|tac|nl|bat)[^;&|]*${SECRET_VAR_REF}"
+  [[ "$lt" =~ $re ]] && block "Printing a variable that looks like a secret (inside a script string)."
+  re="<<[^;&|]*${SECRET_VAR_REF}"
+  [[ "$lt" =~ $re ]] && block "Here-string that expands a variable that looks like a secret (inside a script string)."
+  re="${P_ANY}envsubst${WORD_END}"
+  [[ "$t" =~ $re ]] && block "envsubst expands environment variables, including secrets."
+  re="${P_ANY}(env|set|export|declare|typeset)[[:space:]]*${ANY_TERM}"
+  [[ "$t" =~ $re ]] && block "'env', 'set', 'export' or 'declare' without arguments prints secret values (inside a script string)."
+  re="${P_ANY}(export[[:space:]]+-p|(declare|typeset|readonly)[[:space:]]+-[[:alnum:]]*[px])([[:space:]]|\$|['\"])"
+  [[ "$t" =~ $re ]] && block "Environment dump (inside a script string)."
+}
+
+# End of a bare builtin inside a script string: end, separator, quote, newline, comment or redirection.
+ANY_TERM=$'([;&|)\'"`\n#<>]|$)'
+
+# Environment access in code that is passed inline to an interpreter (python -c, node -e, awk, heredocs).
+RE_DUMP_LOOSE='process\.env|os\.environ|os\.getenv|(^|[^[:alnum:]_])environ([^[:alnum:]_]|$)|getenv|ENVIRON|ENV\[|ENV\{|%ENV|ENV\.to_h|\$_ENV|\$_SERVER|Deno\.env|Bun\.env'
+# jq can print the environment with 'env' or '$ENV'. Checked at command position on the raw text.
+RE_JQENV="${P_CP}jq[[:space:]]([^;&|]*[[:space:]])?['\"]?(env|\\\$ENV)(['\"[:space:].|[)]|\$)"
+RE_WRAPPER="${P_CP}(bash|sh|zsh|dash|ksh|eval|source|xargs|python[0-9.]*|node|perl|ruby|php|deno|bun|osascript|timeout|sudo|su|nice|watch|stdbuf|caffeinate|setsid|ssh|script|awk|gawk|mawk|doppler[[:space:]]+run)([[:space:]]|\$)"
+RE_INLINE="${P_CP}((python[0-9.]*|node|ruby|perl|php|deno|bun)[[:space:]]([^;&|]*[[:space:]])?(-[a-zA-Z]*[ecEr]|--eval|-pe|-ne)([[:space:]=]|\$)|deno[[:space:]]+eval|(python[0-9.]*|node|ruby|perl|php|deno|bun)[^;&|]*<<|(bash|sh|zsh|dash|ksh)[[:space:]]([^;&|]*[[:space:]])?-[a-zA-Z]*c([[:space:]]|\$)|(awk|gawk|mawk|eval)([[:space:]]|\$))"
 RE_DOPPLER_CMDSTR="${P_CP}doppler[^;&|]*[[:space:]](--command|-c)([[:space:]=]|\$)"
+
+MAX_TOKENIZE=8000
 
 RE_DSET_OK='^[[:space:]]*dset[[:space:]]+[A-Z][A-Z0-9_]*[[:space:]]*$'
 RE_DPUSH_OK='^[[:space:]]*dpush[[:space:]]+[A-Z][A-Z0-9_]*[[:space:]]+[a-z0-9][a-z0-9_-]*[[:space:]]+[a-z0-9][a-z0-9_-]*[[:space:]]*$'
@@ -311,12 +416,18 @@ case "$tool" in
     [[ "$cmd" =~ $RE_DSET_OK ]] && exit 0
     [[ "$cmd" =~ $RE_DPUSH_OK ]] && exit 0
 
-    # 2) Preprocess and tokenize
+    # 2) Preprocess and tokenize. Tokenizing is quadratic in bash, so very long commands
+    #    skip it and get the plain-text rules for wrappers instead.
     text="$(preprocess "$cmd")"
-    tokenize "$text"
+    if ((${#text} > MAX_TOKENIZE)); then
+      SK="${text//$'\n'/;}"
+    else
+      tokenize "$text"
+    fi
 
-    # 3) Raw text rules
-    [[ "$text" =~ $RE_DUMP ]] && block "Printing environment variables from a code snippet."
+    # 3) jq builtins that print the environment
+    semi="${cmd//$'\n'/;}"
+    [[ "$semi" =~ $RE_JQENV ]] && block "jq can print the environment ('env' or \$ENV)."
 
     # 4) Command-position rules on the skeleton
     scan_core "$SK" "$P_CP" cp
@@ -329,10 +440,18 @@ case "$tool" in
     ((UNTERM)) && wrapper=1
     [[ "$SK" =~ $RE_WRAPPER ]] && wrapper=1
     [[ "$SK" =~ $RE_DOPPLER_CMDSTR ]] && wrapper=1
+    inline=0
+    [[ "$SK" =~ $RE_INLINE ]] && inline=1
+    ((inline)) && wrapper=1
+    # The full original text is used here, so heredoc bodies fed to an interpreter are included.
     if ((wrapper)); then
-      scan_core "$text" "$P_ANY" any
-      refs_envfile "$text" && block ".env files are off limits (found inside a script string)."
-      refs_credfile "$text" && block "The Doppler CLI config can hold the auth token (found inside a script string)."
+      scan_core "$cmd" "$P_ANY" any
+      scan_any_extra "$cmd"
+      if ((inline)); then
+        [[ "$cmd" =~ $RE_DUMP_LOOSE ]] && block "Environment access in code passed to an interpreter."
+      fi
+      refs_envfile "$cmd" && block ".env files are off limits (found inside a script string)."
+      refs_credfile "$cmd" && block "The Doppler CLI config can hold the auth token (found inside a script string)."
     fi
     exit 0
     ;;

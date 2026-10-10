@@ -130,6 +130,18 @@ STUB_CORRUPT=1 run dpush TEST_P app qa
 expect "dpush with corrupt target exits 1" test "$RC" -eq 1
 expect "dpush corrupt message has no value" not_contains "$OUT" "$VAL"
 
+# --- xtrace must not leak the value ---
+setup
+clip "$VAL"
+OUT="$(bash -x "$ROOT/bin/dset" TEST_X 2>&1)"
+RC=$?
+expect "dset works under bash -x" test "$RC" -eq 0
+expect "dset under bash -x does not leak the value" not_contains "$OUT" "$VAL"
+OUT="$(bash -x "$ROOT/bin/dpush" TEST_X app prd 2>&1)"
+RC=$?
+expect "dpush works under bash -x" test "$RC" -eq 0
+expect "dpush under bash -x does not leak the value" not_contains "$OUT" "$VAL"
+
 # --- install.sh ---
 setup
 BIN="$TMP/bin"

@@ -114,7 +114,7 @@ t $B "bash -c 'doppler secrets get X'"
 
 # ---------- .env and credential files ----------
 t $A 'cat .env.example'
-t $A 'ls .envrc'
+t $A 'ls .environment'
 t $A 'cat README.md'
 t $A 'git log --oneline -- .env.example'
 t $B 'cat .env'
@@ -127,6 +127,105 @@ t $B 'cat $(echo .env)'
 t $B 'cat ~/.doppler/.doppler.yaml'
 t $B 'security find-generic-password -s foo -w'
 t $B 'security dump-keychain'
+
+# ---------- shell keywords, wrappers, interpreters ----------
+t $B 'if true; then pbpaste; fi'
+t $B 'while true; do pbpaste; done'
+t $B '{ pbpaste; }'
+t $B 'find . -exec pbpaste \;'
+t $B 'sudo -u bob pbpaste'
+t $B 'nice pbpaste'
+t $B 'watch pbpaste'
+t $B 'ssh host pbpaste'
+t $B "bash -c 'echo \$STRIPE_SECRET_KEY'"
+t $B "doppler run -- sh -c 'echo \"\$API_TOKEN\"'"
+t $B "sh -c 'env'"
+t $B "bash -c 'export -p'"
+t $B "python3 -c 'import os; print(os.getenv(\"KEY\"))'"
+t $B "ruby -e 'puts ENV[\"KEY\"]'"
+t $B $'python3 <<\'EOF\'\nimport os\nprint(os.environ)\nEOF'
+t $B 'jq -n env'
+t $B "jq -n '\$ENV'"
+t $A 'jq .name package.json'
+t $A 'sudo apt-get install -y jq'
+t $A 'if [ -f x ]; then echo yes; fi'
+t $A 'for f in a b; do echo $f; done'
+t $A "bash -c 'echo hello'"
+t $A 'ssh host ls'
+t $A "find . -name '*.md' -exec cat {} \\;"
+t $A 'echo "while testing do something"'
+t $A 'grep -rn os.environ src/'
+
+# ---------- review findings (second-model review, 2026-10) ----------
+t $B 'cat "$HOME/myproject/.env"'
+t $B 'cat "/Users/Jane Doe/app/.env"'
+t $B 'cat "$HOME/.doppler/.doppler.yaml"'
+t $B 'cat .envrc'
+t $B 'grep -rn "DOPPLER_TOKEN" .'
+t $B 'grep -r KEY ~'
+t $B 'rg --hidden KEY'
+t $B 'rg -uu KEY .'
+t $B 'cat .*'
+t $B 'cat .e*'
+t $B 'cat .en?'
+t $B $'echo "see <<X docs"\nprintenv DOPPLER_TOKEN'
+t $B $'ls # <<X\nprintenv DOPPLER_TOKEN'
+t $B 'env # list vars'
+t $B 'set 2>&1'
+t $B 'export > /tmp/e'
+t $B 'declare'
+t $B 'declare | grep -i token'
+t $B "node -e 'const t = process.env.DOPPLER_TOKEN; console.log(t)'"
+t $B "python3 -c 'from os import environ; print(environ[\"DOPPLER_TOKEN\"])'"
+t $B "awk 'BEGIN { print ENVIRON[\"DOPPLER_TOKEN\"] }'"
+t $B "echo '\$DOPPLER_TOKEN' | envsubst"
+t $B "bash -c 'node -e \"console.log(process.env.X)\"'"
+t $A 'echo $MAX_TOKENS'
+t $A 'echo $TESTS_PASSED'
+t $A 'grep -rn foo src/'
+t $A "grep -rn foo . --include='*.ts'"
+t $A 'rg foo src/'
+t $A 'ls .github'
+t $A 'ls -la ~/.config'
+t $A 'python3 -m pytest -q'
+t $A 'node build.js'
+t $A "sed -n '/.*/p' file"
+t $A 'cat "$HOME/project/README.md"'
+t $A 'git status 2>&1'
+t $A 'echo done # set'
+BIG_BODY="$(printf 'line with doppler secrets get and printenv and pbpaste\n%.0s' {1..300})"
+t $A $'cat > f.txt <<\'EOF\'\n'"$BIG_BODY"$'\nEOF'
+BIG_PAD="$(printf 'a%.0s' {1..9000})"
+t $B "echo $BIG_PAD; pbpaste"
+t $A "echo $BIG_PAD; ls"
+
+# ---------- second review round ----------
+t $B 'doppler run printenv'
+t $B 'doppler run env'
+t $B 'env -u FOO'
+t $B 'env --unset FOO'
+t $B 'env -u FOO printenv'
+t $B $'cat <<EOF\n$API_KEY\nEOF'
+t $B 'cat <<< "$API_KEY"'
+t $B 'x=pbpaste; $x'
+t $B 'alias p=pbpaste; p'
+t $B "bash -c 'set'"
+t $B "doppler run -- sh -c 'set'"
+t $B "bash -c 'envsubst <<< \"\$DB_PASSWORD\"'"
+t $B $'bash <<\'EOF\'\nenv\nEOF'
+t $B 'set -x; test -n "$API_KEY"'
+t $B 'set -o xtrace'
+t $B 'bash -x script.sh'
+t $B 'export SHELLOPTS=xtrace'
+t $B "perl -e 'print \$ENV{API_KEY}'"
+t $B "php -r 'echo getenv(\"API_KEY\");'"
+t $B "deno eval 'console.log(Deno.env.get(\"X\"))'"
+t $A 'npm run dev # reads .env.local'
+t $A 'ls -la # .env moved to doppler'
+t $A 'git commit -m "use jq to read env vars"'
+t $A "jq '.name' package.json"
+t $A "bash -c 'set -e; ls'"
+t $A 'echo "# not a comment"'
 
 # ---------- false positives that must stay allowed ----------
 t $A "grep -i -n -E 'secret|doppler|env|vault' file.md"

@@ -67,8 +67,13 @@ Secret names must be `UPPER_SNAKE_CASE`. Project and config names must be lowerc
 The plugin registers a `PreToolUse` hook for `Bash`, `Read`, `Grep` and `Glob`. It blocks:
 
 - the clipboard: `pbpaste`, AppleScript `the clipboard`
-- environment dumps: `printenv`, bare `env`, `set`, `export -p`, `declare -x`, `echo $SOMETHING_KEY`, `process.env` and `os.environ` dumps in code snippets
-- `.env` files (`.env.example` is allowed) and the Doppler CLI config `~/.doppler`
+- environment dumps: `printenv`, bare `env`, `set`, `export`, `declare`, `export -p`, `declare -x`, `jq env`, `envsubst`, `doppler run printenv`
+- printing a variable with KEY, TOKEN, SECRET or PASS as a name part (`echo $API_KEY`, `cat <<< "$API_KEY"`, a heredoc that expands it). Names like `MAX_TOKENS` pass.
+- shell tracing that would print expanded secrets: `set -x`, `bash -x`, `SHELLOPTS=`
+- indirection such as `x=pbpaste; $x` or `alias p=pbpaste`
+- environment access in inline code: `process.env`, `os.environ`, `getenv`, `ENVIRON` inside `python -c`, `node -e`, `awk`, `bash -c` and heredocs fed to an interpreter
+- `.env` files (`.env.example` is allowed), `.envrc` and the Doppler CLI config `~/.doppler`, also as a quoted path (`"$HOME/app/.env"`) or as a glob (`cat .*`, `cat .e*`)
+- recursive `grep` from a root directory (`grep -r KEY .`), because it reads dotfiles. Add `--include` or name a subdirectory. `rg --hidden` and `rg --no-ignore` are blocked for the same reason.
 - `doppler secrets get`, `download`, `substitute`, listing without `--only-names`, `set` and `delete` without `--silent`, and `doppler configure` (except `get project` and `get config`)
 - the macOS keychain: `security find-generic-password`, `dump-keychain`, `export`
 - `dset` and `dpush` in any form except `dset NAME` and `dpush NAME PROJECT CONFIG`, so Claude cannot pass flags or chain commands
@@ -82,11 +87,13 @@ Blocked commands return exit code 2 and a reason that Claude reads.
 This is a guardrail, not a sandbox. Read this before you rely on it.
 
 - **Heuristic, not a parser.** The hook does not understand all of shell syntax. A determined command can get around it, for example by building a command name from pieces, or by running a script that Claude first wrote to disk. A tested secret guard from another project leaked on 5 of 14 shell commands. Treat the hook as protection against accidents and ordinary prompts, not against an attacker who controls the prompt.
-- **False positives.** Mentions of `.env` or `pbpaste` in a script string run by an interpreter are blocked, and so is a URL that ends in `/.env`. Rephrase or run the command yourself with the `!` prefix.
+- **Known gaps.** `grep -r PATTERN` without a path argument, env files with other names (`prod.env`), `ssh host 'printenv'` (the quoted remote command is not inspected) and scripts that are already on disk are not caught.
+- **False positives.** Mentions of `.env` or `pbpaste` in a script string run by an interpreter are blocked, and so is a URL that ends in `/.env`. Commands over 8000 characters skip the quote-aware parser and are scanned more coarsely. Rephrase, split the command, or run it yourself with the `!` prefix.
 - **Plugins cannot ship permission rules.** The deny rules from `/secret-handoff:setup` are a second layer that you add to your own settings. A plugin also cannot protect its own files from edits.
 - **Grep over directories.** Claude Code's Grep tool honors `.gitignore`, so a gitignored `.env` is normally skipped, but a tracked or unignored `.env` can show up in matches.
 - **The clipboard is shared.** If something else is in the clipboard when `dset` runs, that gets stored. The output shows the name and target, never the value.
 - **Clipboard managers** (Raycast, Paste, Maccy) and Universal Clipboard keep a history. Exclude your password manager there.
+- **Shell tracing.** `dset` and `dpush` turn off `xtrace` at the start, so `bash -x` and an exported `SHELLOPTS` cannot print the value.
 - **Session logs.** Values that Claude read before you installed this stay in plain text in `~/.claude/projects/*/*.jsonl`. Search for known key prefixes, rotate what you find, and delete the logs.
 - **The depot is a shared waiting room.** Anyone with access to the depot config can read what is in it. Delete secrets from it once pushed.
 - **Doppler token.** The hook blocks the common ways to print it, but the token still lives on your machine. Use a service token with minimal scope for CI.
