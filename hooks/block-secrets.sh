@@ -276,8 +276,10 @@ tokenize() {
 # Each option may take one word as its argument (env -u NAME, sudo -u user). The argument is optional
 # in the pattern, so the regex matches both readings.
 SKIP_OPT='(-[^[:space:]]+[[:space:]]+([A-Za-z_][A-Za-z0-9_]*[[:space:]]+)?)*'
-SKIP_ENV="((sudo|command|exec|nohup|time|builtin|noglob|env)[[:space:]]+${SKIP_OPT}|(if|then|else|elif|while|until|do|!)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*"
-SKIP_NOENV="((sudo|command|exec|nohup|time|builtin|noglob)[[:space:]]+${SKIP_OPT}|(if|then|else|elif|while|until|do|!)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*"
+# 'command' runs its argument only without -v or -V ('command -v dset' just looks the name up).
+SKIP_CMD='command[[:space:]]+(-[pP][[:space:]]+)?'
+SKIP_ENV="((sudo|exec|nohup|time|builtin|noglob|env)[[:space:]]+${SKIP_OPT}|${SKIP_CMD}|(if|then|else|elif|while|until|do|!)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*"
+SKIP_NOENV="((sudo|exec|nohup|time|builtin|noglob)[[:space:]]+${SKIP_OPT}|${SKIP_CMD}|(if|then|else|elif|while|until|do|!)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*"
 PATHP='([^[:space:];&|()`]*/)?'
 CP_HEAD='(^|[;&|(`{]|--|-exec(dir)?)[[:space:]]*'
 P_CP="${CP_HEAD}${SKIP_ENV}${PATHP}"

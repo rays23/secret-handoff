@@ -227,6 +227,13 @@ t $A "jq '.name' package.json"
 t $A "bash -c 'set -e; ls'"
 t $A 'echo "# not a comment"'
 
+# ---------- command -v lookups ----------
+t $A 'command -v dset dpush'
+t $A 'command -v pbpaste'
+t $A 'command -V dset'
+t $B 'command -p pbpaste'
+t $B 'command env'
+
 # ---------- false positives that must stay allowed ----------
 t $A "grep -i -n -E 'secret|doppler|env|vault' file.md"
 t $A 'grep -i -c -e doppler -e clipboard -e dset file.md'
